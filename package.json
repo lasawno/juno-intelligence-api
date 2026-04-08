@@ -1,0 +1,26 @@
+{
+    "name": "juno-intelligence-api",
+    "version": "1.0.0",
+    "description": "Standalone Juno AI Intelligence API — conversational engine, safety layer, and behavioral intelligence extracted from JunoTalk",
+    "main": "dist/index.js",
+    "scripts": {
+      "dev": "tsx src/index.ts",
+      "build": "tsc",
+      "start": "node dist/index.js"
+    },
+    "dependencies": {
+      "@anthropic-ai/sdk": "^0.52.0",
+      "cors": "^2.8.5",
+      "express": "^4.21.2",
+      "groq-sdk": "^0.9.1",
+      "openai": "^4.93.0"
+    },
+    "devDependencies": {
+      "@types/cors": "^2.8.17",
+      "@types/express": "^4.17.21",
+      "@types/node": "^22.14.0",
+      "tsx": "^4.19.3",
+      "typescript": "^5.8.3"
+    }
+  }
+  
