@@ -1,124 +1,224 @@
 import { Router, Request, Response } from "express";
-  import Groq from "groq-sdk";
+import Groq from "groq-sdk";
+import OpenAI from "openai";
+import Anthropic from "@anthropic-ai/sdk";
 
-  const INTELLIGENCE_CORE_URL = process.env.INTELLIGENCE_CORE_URL || "https://junointelligencecore.replit.app";
+export const chatRouter = Router();
 
-  interface EnrichResponse {
-    persona: { name: string; voice: string; personality: string };
-    personality: Record<string, unknown>;
-    reasoning: Record<string, unknown>;
-    intelligence_layer: Record<string, unknown>;
-    knowledge: {
-      query: string;
-      context: Array<{ layer: string; confidence: number; results: Array<{ title: string; content: string }> }>;
-      ranked_layers: Array<{ layer: string; confidence: number }>;
-    };
-    model: { id: string; provider: string; temperature: number; max_tokens: number };
-    fallback_chain: string[];
-    feature_flags: Record<string, boolean>;
-  }
+type Message = { role: "system" | "user" | "assistant"; content: string };
 
-  async function fetchEnrichment(message: string, history?: Array<{ role: string; content: string }>): Promise<EnrichResponse | null> {
+interface ChatBody {
+  message?: string;
+  messages?: Message[];
+  systemPrompt?: string;
+  language?: string;
+  task?: string;
+  temperature?: number;
+  maxTokens?: number;
+  sessionId?: string;
+}
+
+interface TranslateBody {
+  text: string;
+  targetLang: string;
+  sourceLang?: string;
+  systemPrompt?: string;
+}
+
+async function inferGroq(
+  messages: Message[],
+  maxTokens: number,
+  temperature: number
+): Promise<{ text: string; model: string; tokens: number }> {
+  const key = process.env.GROQ_API_KEY;
+  if (!key) throw new Error("GROQ_API_KEY not configured");
+  const client = new Groq({ apiKey: key });
+  const models = [
+    "llama-3.3-70b-versatile",
+    "llama-3.1-70b-versatile",
+    "llama3-70b-8192",
+    "mixtral-8x7b-32768",
+  ];
+  let last: Error = new Error("no models tried");
+  for (const model of models) {
     try {
-      const resp = await fetch(`${INTELLIGENCE_CORE_URL}/api/reasoning/enrich`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, conversation_history: history, task: "chat" }),
-        signal: AbortSignal.timeout(10000),
-      });
-      if (!resp.ok) return null;
-      return (await resp.json()) as EnrichResponse;
-    } catch {
-      return null;
-    }
-  }
-
-  function buildPromptFromEnrichment(data: EnrichResponse, message: string): {
-    messages: Array<{ role: "system" | "user"; content: string }>;
-    temperature: number;
-    maxTokens: number;
-  } {
-    const parts: string[] = [];
-    parts.push(`You are ${data.persona.name}. ${data.persona.personality}`);
-    parts.push(`Voice: ${data.persona.voice}`);
-
-    const knowledgeText = data.knowledge.context
-      .flatMap((layer) => layer.results.map((r) => `[${layer.layer.toUpperCase()}] ${r.title}: ${r.content}`))
-      .join("\n");
-    if (knowledgeText) {
-      parts.push(`\nRelevant Knowledge:\n${knowledgeText}`);
-    }
-
-    parts.push("\nBe helpful, concise, and accurate. Cite knowledge sources when available.");
-
-    return {
-      messages: [
-        { role: "system", content: parts.join("\n") },
-        { role: "user", content: message },
-      ],
-      temperature: data.model.temperature,
-      maxTokens: data.model.max_tokens,
-    };
-  }
-
-  function getGroqClient(): Groq | null {
-    const key = process.env.GROQ_API_KEY;
-    if (!key) return null;
-    return new Groq({ apiKey: key });
-  }
-
-  export const chatRouter = Router();
-
-  chatRouter.post("/chat", async (req: Request, res: Response) => {
-    const { message, language, conversation_history } = req.body;
-    if (!message || typeof message !== "string") {
-      return res.status(400).json({ error: "message is required" });
-    }
-
-    const groq = getGroqClient();
-    if (!groq) {
-      return res.status(503).json({ error: "No LLM provider configured. Set GROQ_API_KEY." });
-    }
-
-    try {
-      const enrichment = await fetchEnrichment(message, conversation_history);
-
-      let messages: Array<{ role: "system" | "user"; content: string }>;
-      let temperature = 0.75;
-      let maxTokens = 1200;
-
-      if (enrichment) {
-        const prompt = buildPromptFromEnrichment(enrichment, message);
-        messages = prompt.messages;
-        temperature = prompt.temperature;
-        maxTokens = prompt.maxTokens;
-      } else {
-        messages = [
-          { role: "system", content: "You are Juno, a warm and intelligent AI assistant." },
-          { role: "user", content: message },
-        ];
-      }
-
-      const completion = await groq.chat.completions.create({
-        model: "llama-3.3-70b-versatile",
+      const resp = await client.chat.completions.create({
+        model,
         messages,
-        temperature,
         max_tokens: maxTokens,
+        temperature,
       });
-
-      res.json({
-        reply: completion.choices[0]?.message?.content || "",
-        language: language || "en",
-        model: "llama-3.3-70b-versatile",
-        enriched: !!enrichment,
-        knowledge_layers: enrichment?.knowledge.ranked_layers || [],
-      });
-    } catch (err: any) {
-      if (err?.status === 429) {
-        return res.status(429).json({ error: "Rate limited. Try again shortly." });
-      }
-      console.error("Chat error:", err?.message || err);
-      res.status(500).json({ error: "Failed to generate response" });
+      const text = resp.choices[0]?.message?.content?.trim();
+      if (!text) throw new Error("empty response");
+      return { text, model, tokens: resp.usage?.total_tokens ?? 0 };
+    } catch (e: any) {
+      last = e;
     }
+  }
+  throw last;
+}
+
+async function inferOpenRouter(
+  messages: Message[],
+  maxTokens: number,
+  temperature: number
+): Promise<{ text: string; model: string; tokens: number }> {
+  const key = process.env.OPENROUTER_API_KEY;
+  if (!key) throw new Error("OPENROUTER_API_KEY not configured");
+  const client = new OpenAI({ apiKey: key, baseURL: "https://openrouter.ai/api/v1" });
+  const models = [
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "google/gemma-3-27b-it:free",
+    "mistralai/mistral-7b-instruct:free",
+    "qwen/qwen3-30b-a3b:free",
+  ];
+  let last: Error = new Error("no models tried");
+  for (const model of models) {
+    try {
+      const resp = await client.chat.completions.create({ model, messages, max_tokens: maxTokens, temperature });
+      const text = resp.choices[0]?.message?.content?.trim();
+      if (!text) throw new Error("empty response");
+      return { text, model, tokens: resp.usage?.total_tokens ?? 0 };
+    } catch (e: any) {
+      last = e;
+    }
+  }
+  throw last;
+}
+
+async function inferAnthropic(
+  messages: Message[],
+  systemContent: string,
+  maxTokens: number,
+  temperature: number
+): Promise<{ text: string; model: string; tokens: number }> {
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) throw new Error("ANTHROPIC_API_KEY not configured");
+  const client = new Anthropic({ apiKey: key });
+  const userMessages = messages.filter((m) => m.role !== "system") as Array<{
+    role: "user" | "assistant";
+    content: string;
+  }>;
+  const resp = await client.messages.create({
+    model: "claude-3-5-haiku-20241022",
+    max_tokens: maxTokens,
+    temperature,
+    system: systemContent,
+    messages: userMessages,
   });
-  
+  const text = resp.content[0]?.type === "text" ? resp.content[0].text.trim() : "";
+  if (!text) throw new Error("empty response from Anthropic");
+  return {
+    text,
+    model: "claude-3-5-haiku-20241022",
+    tokens: resp.usage.input_tokens + resp.usage.output_tokens,
+  };
+}
+
+async function runInference(
+  messages: Message[],
+  maxTokens: number,
+  temperature: number
+): Promise<{ text: string; provider: string; model: string; tokens: number }> {
+  const systemContent = messages.find((m) => m.role === "system")?.content ?? "";
+  const errors: string[] = [];
+
+  try {
+    const r = await inferGroq(messages, maxTokens, temperature);
+    return { ...r, provider: "groq" };
+  } catch (e: any) {
+    errors.push(`groq: ${e.message}`);
+    console.warn("[JunoCore] Groq failed:", e.message);
+  }
+
+  try {
+    const r = await inferOpenRouter(messages, maxTokens, temperature);
+    return { ...r, provider: "openrouter" };
+  } catch (e: any) {
+    errors.push(`openrouter: ${e.message}`);
+    console.warn("[JunoCore] OpenRouter failed:", e.message);
+  }
+
+  try {
+    const r = await inferAnthropic(messages, systemContent, maxTokens, temperature);
+    return { ...r, provider: "anthropic" };
+  } catch (e: any) {
+    errors.push(`anthropic: ${e.message}`);
+    console.warn("[JunoCore] Anthropic failed:", e.message);
+  }
+
+  throw new Error(`All providers failed: ${errors.join(" | ")}`);
+}
+
+chatRouter.post("/chat", async (req: Request, res: Response) => {
+  const {
+    message,
+    messages,
+    systemPrompt = "You are Juno, a helpful and empathetic multilingual AI assistant. Be concise and natural.",
+    language = "en",
+    temperature = 0.7,
+    maxTokens = 1024,
+  } = req.body as ChatBody;
+
+  if (!message && (!messages || messages.length === 0)) {
+    return res.status(400).json({ error: "message or messages is required" });
+  }
+
+  let builtMessages: Message[] = messages ?? [];
+  if (builtMessages.length === 0) {
+    builtMessages = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: message! },
+    ];
+  } else if (!builtMessages.some((m) => m.role === "system")) {
+    builtMessages = [{ role: "system", content: systemPrompt }, ...builtMessages];
+  }
+
+  try {
+    const result = await runInference(builtMessages, maxTokens, temperature);
+    return res.json({
+      reply: result.text,
+      provider: result.provider,
+      model: result.model,
+      tokens: result.tokens,
+      language,
+    });
+  } catch (err: any) {
+    console.error("[JunoCore/chat] inference error:", err.message);
+    return res.status(502).json({ error: "Inference failed", detail: err.message });
+  }
+});
+
+chatRouter.post("/translate", async (req: Request, res: Response) => {
+  const { text, targetLang, sourceLang = "auto", systemPrompt } = req.body as TranslateBody;
+
+  if (!text || !targetLang) {
+    return res.status(400).json({ error: "text and targetLang are required" });
+  }
+
+  const sys =
+    systemPrompt ??
+    `You are a world-class interpreter. Translate naturally and idiomatically — how a native speaker would say it in real conversation. Output ONLY the translated text, nothing else.`;
+
+  const from = sourceLang === "auto" ? "the source language" : sourceLang;
+  const userMsg = `Translate from ${from} to ${targetLang}:\n\n${text}`;
+
+  const messages: Message[] = [
+    { role: "system", content: sys },
+    { role: "user", content: userMsg },
+  ];
+
+  try {
+    const result = await runInference(messages, 512, 0.1);
+    return res.json({
+      translatedText: result.text,
+      provider: result.provider,
+      model: result.model,
+      sourceLang,
+      targetLang,
+    });
+  } catch (err: any) {
+    console.error("[JunoCore/translate] inference error:", err.message);
+    return res.status(502).json({ error: "Translation failed", detail: err.message });
+  }
+});
