@@ -5,6 +5,7 @@ import { healthRouter } from "./routes/health";
 import { modelsRouter } from "./routes/models";
 import { visionRouter } from "./routes/vision";
 import { authMiddleware } from "./middleware/auth";
+import { connectToCore, startHeartbeat } from "./lib/juno-core-client";
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -19,7 +20,14 @@ app.use("/api/v1", authMiddleware, modelsRouter);
 app.use("/api/v1", authMiddleware, visionRouter);
 
 app.listen(PORT, () => {
-  console.log(`Juno Intelligence API running on port ${PORT}`);
-});
+    console.log(`Juno Intelligence API running on port ${PORT}`);
+
+    // Connect to Juno Intelligence Core (offload compute engines)
+    connectToCore().then(() => {
+      startHeartbeat();
+    }).catch((err) => {
+      console.warn("[Startup] Intelligence Core connection deferred:", err?.message);
+    });
+  });
 
 export default app;
