@@ -17,21 +17,23 @@ else
 fi
 
 # ── 2. Install Python deps ──────────────────────────────────────────────────
+PIP="python3 -m pip"
+
 if ! python3 -c "import vibevoice" 2>/dev/null; then
   log "Installing PyTorch (CPU)..."
-  pip install -q torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+  $PIP install -q torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 
   log "Installing VibeVoice and dependencies..."
-  pip install -q -e "$SRC_DIR[streamingtts]"
+  $PIP install -q -e "$SRC_DIR[streamingtts]"
 
   log "Installing server deps..."
-  pip install -q fastapi uvicorn scipy soundfile
+  $PIP install -q fastapi uvicorn scipy soundfile
 else
   log "vibevoice already installed, skipping pip"
 fi
 
 # ── 3. Ensure server deps present regardless ───────────────────────────────
-python3 -c "import fastapi, uvicorn" 2>/dev/null || pip install -q fastapi uvicorn
+python3 -c "import fastapi, uvicorn" 2>/dev/null || $PIP install -q fastapi uvicorn
 
 # ── 4. Show available voices ────────────────────────────────────────────────
 VOICES_DIR="$SRC_DIR/demo/voices/streaming_model"
