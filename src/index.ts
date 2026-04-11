@@ -23,10 +23,15 @@ app.listen(PORT, () => {
     console.log(`Juno Intelligence API running on port ${PORT}`);
 
     // Connect to Juno Intelligence Core (offload compute engines)
-    connectToCore().then(() => {
-      startHeartbeat();
+    connectToCore().then((result) => {
+      if (result) {
+        startHeartbeat();
+        console.log("[Startup] Intelligence Core connected — heartbeat active");
+      } else {
+        console.warn("[Startup] Intelligence Core not reachable — check JUNO_CORE_URL and JUNOCORE_API_KEY");
+      }
     }).catch((err) => {
-      console.warn("[Startup] Intelligence Core connection deferred:", err?.message);
+      console.warn("[Startup] Intelligence Core connection failed:", err?.message);
     });
   });
 
