@@ -29,6 +29,8 @@ function authHeaders(): Record<string, string> {
     "Content-Type": "application/json",
     Accept: "application/json",
     "X-Requested-With": "XMLHttpRequest",
+    Origin: "https://junointelligencecore.replit.app",
+    Referer: "https://junointelligencecore.replit.app/",
     ...(key ? { Authorization: `Bearer ${key}` } : {}),
   };
 }
@@ -43,7 +45,7 @@ async function coreFetch<T>(path: string): Promise<T | null> {
   try {
     const resp = await fetch(`${base}/api${path}`, {
       signal: controller.signal,
-      headers: { Accept: "application/json", "X-Requested-With": "XMLHttpRequest" },
+      headers: { Accept: "application/json", "X-Requested-With": "XMLHttpRequest", Origin: "https://junointelligencecore.replit.app", Referer: "https://junointelligencecore.replit.app/" },
     });
     if (!resp.ok) return null;
     return (await resp.json()) as T;
